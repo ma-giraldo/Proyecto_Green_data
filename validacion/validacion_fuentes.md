@@ -56,7 +56,23 @@ pequeña pero real, consistente con la diferencia CO2 vs. CO2e.
 
 ## Periodo de comparación válido
 
-Año **2000 a 2023** (límite superior = última cobertura confirmada del
-Banco Mundial). OWID 2024-2025 queda disponible en Silver/Gold pero sin
-contraparte del Banco Mundial para calcular diferencia (se marca como
-`sin_dato_para_comparar`, nunca se descarta).
+Año **2000 a 2024** (confirmado ejecutando el pipeline completo el
+19-nov-2026: el Banco Mundial sí llega hasta 2024 para estos 10 países,
+no se queda en 2023 como sugería la revisión inicial). OWID 2025 queda
+disponible en Silver/Gold pero sin contraparte del Banco Mundial todavía
+(se marca `sin_dato_para_comparar`, nunca se descarta).
+
+## Hallazgo de la primera corrida end-to-end
+
+Al ejecutar el pipeline completo contra las APIs reales (sin Airflow,
+directo con Python), la tabla Gold salió con **1487 de 1737 filas**
+marcadas `sin_dato_para_comparar`: OWID trae historia desde 1750-1850 para
+varios países, y el *outer join* contra el Banco Mundial (que solo se pidió
+desde 2000) generaba miles de filas sin sentido comparativo. Se corrigió
+acotando `transform_owid()` a `anio >= 2000` (la misma constante
+`ANIO_MINIMO` usada como límite inferior de `WB_DATE_RANGE` en
+`extract.py`). Tras el fix, Gold quedó en 260 filas (10 países × 26 años):
+227 `ok`, 23 `divergencia_alta` (diferencia > 10%, sobre todo Colombia y
+China) y 10 `sin_dato_para_comparar` (2025, año sin dato aún del Banco
+Mundial). Verificado corriendo `pytest tests/` (2 pruebas, ambas en verde)
+y el pipeline completo con Python 3.12.8 local.

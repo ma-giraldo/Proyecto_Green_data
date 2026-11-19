@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 SILVER_DIR = Path(__file__).resolve().parent.parent / "data" / "silver"
+ANIO_MINIMO = 2000  # mismo límite inferior que WB_DATE_RANGE en extract.py
 
 
 def transform_world_bank(bronze_path: Path, silver_dir: Path = SILVER_DIR) -> Path:
@@ -46,7 +47,7 @@ def transform_owid(
             "emissions_total_per_capita": "co2_percapita_owid",
         }
     )
-    df = df[df["pais_iso3"].isin(paises_iso3)]
+    df = df[df["pais_iso3"].isin(paises_iso3) & (df["anio"] >= ANIO_MINIMO)]
     df = df.drop_duplicates(subset=["pais_iso3", "anio"])
 
     silver_dir.mkdir(parents=True, exist_ok=True)

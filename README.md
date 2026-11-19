@@ -14,7 +14,7 @@ trazabilidad y diagnóstico de fallas (no en modelos de ML ni EDA completo).
 
 | Fuente | Tipo | Indicador | Cobertura |
 |---|---|---|---|
-| Banco Mundial | API pública | `EN.GHG.CO2.PC.CE.AR5` — CO2e per cápita excl. LULUCF (Climate Watch) | hasta 2023 |
+| Banco Mundial | API pública | `EN.GHG.CO2.PC.CE.AR5` — CO2e per cápita excl. LULUCF (Climate Watch) | hasta 2024 |
 | Our World in Data | CSV | `co2-emissions-per-capita` — CO2 per cápita (Global Carbon Project) | hasta 2025 |
 
 Ambas fuentes fueron validadas contra datos reales antes de construir nada
