@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+dags/data/bronze/*
+dags/data/silver/*
+dags/data/gold/*
+!dags/data/bronze/.gitkeep
+!dags/data/silver/.gitkeep
+!dags/data/gold/.gitkeep
+
+.env
+.secrets/
