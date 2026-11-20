@@ -76,3 +76,14 @@ acotando `transform_owid()` a `anio >= 2000` (la misma constante
 China) y 10 `sin_dato_para_comparar` (2025, año sin dato aún del Banco
 Mundial). Verificado corriendo `pytest tests/` (2 pruebas, ambas en verde)
 y el pipeline completo con Python 3.12.8 local.
+
+## Hallazgo del primer despliegue real (servidor Ubuntu, Airflow 3.1.8)
+
+La tarea `extraer_banco_mundial` falló con `PermissionError: [Errno 13]
+Permission denied` al crear `dags/data/bronze/world_bank/` dentro del
+volumen de `dags/` montado en Docker — el usuario `airflow` del contenedor
+no tiene permiso de escritura ahí. Confirma la advertencia de la sección 7
+del documento de propuesta ("dependerá de cómo esté configurado Docker en
+Ubuntu"). Solución: variable de entorno `CO2_DATA_DIR` (ver README,
+sección "Incidente: permisos de escritura") para apuntar los datos a una
+ruta escribible del contenedor sin tocar el código de nuevo.

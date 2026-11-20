@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
 
-SILVER_DIR = Path(__file__).resolve().parent.parent / "data" / "silver"
+DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR = Path(os.environ.get("CO2_DATA_DIR", str(DEFAULT_DATA_DIR)))
+SILVER_DIR = DATA_DIR / "silver"
 ANIO_MINIMO = 2000  # mismo límite inferior que WB_DATE_RANGE en extract.py
 
 

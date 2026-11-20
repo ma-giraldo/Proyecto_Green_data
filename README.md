@@ -92,9 +92,48 @@ del repo.
    `/opt/airflow/dags/co2_percapita_etl/` en el servidor Ubuntu.
 2. Asegurarse de que el entorno de Airflow tenga `requests` y `pandas`
    instalados (ver `requirements.txt`).
-3. El DAG aparece **pausado** (`is_paused_upon_creation=True`) — activarlo
+3. **Confirmar que el usuario de Airflow puede escribir datos** (ver
+   "Incidente: permisos de escritura" más abajo) y, si no, exportar la
+   variable de entorno `CO2_DATA_DIR` apuntando a una ruta escribible
+   dentro del contenedor antes de levantarlo (ej. en `docker-compose.yml`,
+   sección `environment` del servicio de Airflow).
+4. El DAG aparece **pausado** (`is_paused_upon_creation=True`) — activarlo
    manualmente desde la UI solo después de revisarlo.
-4. Ejecutarlo manualmente ("Trigger DAG") y revisar el Grid/Graph view.
+5. Ejecutarlo manualmente ("Trigger DAG") y revisar el Grid/Graph view.
+
+### Incidente: permisos de escritura en `dags/data/` (resuelto con `CO2_DATA_DIR`)
+
+En el primer despliegue real, `extraer_banco_mundial` falló con
+`PermissionError: [Errno 13] Permission denied` al intentar crear
+`dags/data/bronze/world_bank/` dentro del volumen montado de `dags/` en
+Docker. Es el riesgo que ya se había marcado como pendiente de verificar:
+el volumen de `dags/` no siempre es escribible para el usuario `airflow`
+del contenedor (a veces solo se monta para que el *scheduler* lea el
+código, no para que las tareas escriban datos ahí).
+
+**Solución:** `extract.py`, `transform.py` y `load.py` ahora leen la
+variable de entorno `CO2_DATA_DIR` (si no está definida, usan
+`dags/data/` como antes — sin cambios para quien no la necesite).
+
+**Para diagnosticar qué ruta sí es escribible en tu contenedor**, ejecuta
+esto en el servidor (ajusta el nombre del servicio/contenedor):
+
+```bash
+docker compose exec airflow-worker bash -c '
+  touch /opt/airflow/dags/test_write && echo "dags/: escribible" || echo "dags/: SIN permiso";
+  touch /opt/airflow/logs/test_write && echo "logs/: escribible" || echo "logs/: SIN permiso";
+  touch /opt/airflow/test_write && echo "AIRFLOW_HOME: escribible" || echo "AIRFLOW_HOME: SIN permiso";
+  rm -f /opt/airflow/dags/test_write /opt/airflow/logs/test_write /opt/airflow/test_write
+'
+```
+
+Con el resultado, define `CO2_DATA_DIR` en el `environment:` del servicio
+de Airflow en `docker-compose.yml` (por ejemplo
+`CO2_DATA_DIR=/opt/airflow/logs/co2_percapita_data` si solo `logs/` resultó
+escribible, aunque lo más limpio a mediano plazo es agregar un volumen
+dedicado, ej. `./co2_data:/opt/airflow/co2_percapita_data`, y usar esa
+ruta) y reinicia los contenedores (`docker compose up -d`) antes de volver
+a disparar el DAG.
 
 ## 7. Provocar una falla controlada (para la evidencia de monitoreo)
 

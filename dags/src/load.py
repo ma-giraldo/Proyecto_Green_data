@@ -1,11 +1,14 @@
 """Carga Gold: integra ambas fuentes por país+año y calcula la diferencia entre estimaciones."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pandas as pd
 
-GOLD_DIR = Path(__file__).resolve().parent.parent / "data" / "gold"
+DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR = Path(os.environ.get("CO2_DATA_DIR", str(DEFAULT_DATA_DIR)))
+GOLD_DIR = DATA_DIR / "gold"
 UMBRAL_DIFERENCIA_PORCENTUAL = 10.0
 
 

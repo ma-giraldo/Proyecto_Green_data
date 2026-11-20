@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import date
 from pathlib import Path
 
@@ -16,7 +17,11 @@ OWID_CSV_URL = (
     "?v=1&csvType=full&useColumnShortNames=true"
 )
 
-BRONZE_DIR = Path(__file__).resolve().parent.parent / "data" / "bronze"
+DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+# Permite apuntar los datos a una ruta escribible distinta a dags/data (ej. si el
+# volumen de dags/ en el servidor es de solo lectura para el usuario de Airflow).
+DATA_DIR = Path(os.environ.get("CO2_DATA_DIR", str(DEFAULT_DATA_DIR)))
+BRONZE_DIR = DATA_DIR / "bronze"
 
 
 def extract_world_bank(run_date: date, bronze_dir: Path = BRONZE_DIR) -> Path:
