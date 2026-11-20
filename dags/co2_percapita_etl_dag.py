@@ -11,8 +11,7 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
-from airflow.decorators import dag, task
-from airflow.models import Variable
+from airflow.sdk import Variable, dag, task
 
 sys.path.append(str(Path(__file__).resolve().parent / "src"))
 
@@ -58,7 +57,7 @@ def co2_percapita_etl():
     def punto_de_falla_controlada() -> None:
         """Se activa con la Variable de Airflow `co2_simular_fallo` (default: false),
         sin tocar este archivo, para demostrar monitoreo y diagnóstico de errores."""
-        if Variable.get("co2_simular_fallo", default_var="false").lower() == "true":
+        if Variable.get("co2_simular_fallo", default="false").lower() == "true":
             raise RuntimeError(
                 "Fallo simulado vía Variable 'co2_simular_fallo' (prueba de monitoreo)."
             )

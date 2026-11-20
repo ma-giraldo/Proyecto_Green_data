@@ -55,6 +55,17 @@ con tareas TaskFlow: `extraer_banco_mundial`, `extraer_owid`,
 `transformar_banco_mundial`, `transformar_owid`, `punto_de_falla_controlada`,
 `cargar_gold`.
 
+**Nota de compatibilidad (el servidor corre Airflow 3.1.8):** el DAG usa
+`from airflow.sdk import Variable, dag, task` — no `airflow.decorators` ni
+`airflow.models.Variable`, que son la API vieja de Airflow 2.x y están
+deprecadas en Airflow 3 (el acceso directo a `Variable` desde código de
+tarea ya no funciona así). Se verificó localmente que el archivo parsea sin
+errores con Airflow 3.4.0 instalado vía pip (en Windows no se pudo levantar
+el `DagBag` completo porque el núcleo de Airflow requiere `fcntl`,
+exclusivo de Linux — no aplica al servidor Ubuntu real) y que el grafo de
+dependencias resultante es el esperado: `extraer_* → transformar_* →
+cargar_gold`, con `punto_de_falla_controlada` como compuerta previa a Gold.
+
 ## 5. Estructura del repositorio
 
 ```text
