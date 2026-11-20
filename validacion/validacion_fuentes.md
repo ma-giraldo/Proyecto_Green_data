@@ -84,6 +84,20 @@ Permission denied` al crear `dags/data/bronze/world_bank/` dentro del
 volumen de `dags/` montado en Docker — el usuario `airflow` del contenedor
 no tiene permiso de escritura ahí. Confirma la advertencia de la sección 7
 del documento de propuesta ("dependerá de cómo esté configurado Docker en
-Ubuntu"). Solución: variable de entorno `CO2_DATA_DIR` (ver README,
-sección "Incidente: permisos de escritura") para apuntar los datos a una
-ruta escribible del contenedor sin tocar el código de nuevo.
+Ubuntu"). Primer intento de solución (variable de entorno `CO2_DATA_DIR`
+para reubicar la carpeta local) funcionaba pero seguía dependiendo de
+adivinar qué ruta del contenedor es escribible.
+
+**Decisión final del equipo:** en vez de pelear con permisos de
+filesystem, mover Bronze/Silver/Gold al share SMB `reportes` (conexión de
+Airflow `dwh_smb_reports`), reutilizando un patrón ya probado en otros DAG
+del equipo (publicación con verificación por hash). Cada tarea solo
+necesita un directorio temporal local para procesar con pandas antes de
+publicar/descargar del share — ver `dags/src/smb_storage.py`. Esto es más
+robusto que fijar una ruta local porque no depende de la configuración de
+volúmenes de Docker del servidor, y seguiría funcionando si las tareas se
+distribuyeran entre varios workers. No se pudo probar la conexión SMB real
+localmente (sin acceso al share ni a las credenciales desde esta máquina);
+sí se validó localmente la lógica pura de `smb_storage.py` (validación de
+rutas contra *path traversal*, parseo de nombre de archivo desde una ruta
+UNC) y que el DAG sigue parseando correctamente con Airflow 3.4.0.

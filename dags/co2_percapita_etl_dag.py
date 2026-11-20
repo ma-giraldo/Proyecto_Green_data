@@ -1,13 +1,20 @@
 """DAG Green Data: ETL de CO2 per cápita (Banco Mundial vs. OWID), arquitectura Medallón.
 
-Despliegue: copiar esta carpeta `dags/` completa (el .py y la subcarpeta `src/`)
-a `/opt/airflow/dags/co2_percapita_etl/` en el servidor. Las carpetas de datos
-(`data/bronze`, `data/silver`, `data/gold`) se crean automáticamente ahí mismo
-en la primera corrida.
+Las capas Bronze/Silver/Gold se publican en el share SMB `reportes`
+(conexión de Airflow `dwh_smb_reports`, ver `src/smb_storage.py`), no en el
+sistema de archivos local del worker: evita depender de permisos de
+escritura en el volumen de `dags/` y funciona igual si las tareas corren en
+workers distintos. Cada tarea escribe en un directorio temporal local
+(siempre escribible) y publica/descarga del share antes y después de
+procesar con pandas.
+
+Despliegue: copiar esta carpeta `dags/` completa (el .py y la subcarpeta
+`src/`) a `/opt/airflow/dags/co2_percapita_etl/` en el servidor.
 """
 from __future__ import annotations
 
 import sys
+import tempfile
 from datetime import date, datetime
 from pathlib import Path
 
@@ -15,6 +22,7 @@ from airflow.sdk import Variable, dag, task
 
 sys.path.append(str(Path(__file__).resolve().parent / "src"))
 
+import smb_storage  # noqa: E402
 from extract import extract_owid, extract_world_bank  # noqa: E402
 from load import construir_gold  # noqa: E402
 from transform import transform_owid, transform_world_bank  # noqa: E402
@@ -39,19 +47,33 @@ default_args = {
 def co2_percapita_etl():
     @task
     def extraer_banco_mundial(fecha_ejecucion: str) -> str:
-        return str(extract_world_bank(date.fromisoformat(fecha_ejecucion)))
+        tmp_dir = Path(tempfile.mkdtemp(prefix="co2_bronze_wb_"))
+        archivo_local = extract_world_bank(date.fromisoformat(fecha_ejecucion), bronze_dir=tmp_dir)
+        return smb_storage.subir_archivo(archivo_local, f"{smb_storage.PROYECTO}/bronze/world_bank")
 
     @task
     def extraer_owid(fecha_ejecucion: str) -> str:
-        return str(extract_owid(date.fromisoformat(fecha_ejecucion)))
+        tmp_dir = Path(tempfile.mkdtemp(prefix="co2_bronze_owid_"))
+        archivo_local = extract_owid(date.fromisoformat(fecha_ejecucion), bronze_dir=tmp_dir)
+        return smb_storage.subir_archivo(archivo_local, f"{smb_storage.PROYECTO}/bronze/owid")
 
     @task
-    def transformar_banco_mundial(bronze_path: str) -> str:
-        return str(transform_world_bank(Path(bronze_path)))
+    def transformar_banco_mundial(ruta_smb_bronze: str) -> str:
+        tmp_dir = Path(tempfile.mkdtemp(prefix="co2_silver_wb_"))
+        bronze_local = smb_storage.descargar_archivo(
+            ruta_smb_bronze, tmp_dir / smb_storage.nombre_archivo(ruta_smb_bronze)
+        )
+        silver_local = transform_world_bank(bronze_local, silver_dir=tmp_dir)
+        return smb_storage.subir_archivo(silver_local, f"{smb_storage.PROYECTO}/silver")
 
     @task
-    def transformar_owid(bronze_path: str) -> str:
-        return str(transform_owid(Path(bronze_path), PAISES_ISO3))
+    def transformar_owid(ruta_smb_bronze: str) -> str:
+        tmp_dir = Path(tempfile.mkdtemp(prefix="co2_silver_owid_"))
+        bronze_local = smb_storage.descargar_archivo(
+            ruta_smb_bronze, tmp_dir / smb_storage.nombre_archivo(ruta_smb_bronze)
+        )
+        silver_local = transform_owid(bronze_local, PAISES_ISO3, silver_dir=tmp_dir)
+        return smb_storage.subir_archivo(silver_local, f"{smb_storage.PROYECTO}/silver")
 
     @task
     def punto_de_falla_controlada() -> None:
@@ -63,8 +85,16 @@ def co2_percapita_etl():
             )
 
     @task
-    def cargar_gold(silver_bm_path: str, silver_owid_path: str) -> str:
-        return str(construir_gold(Path(silver_bm_path), Path(silver_owid_path)))
+    def cargar_gold(ruta_smb_silver_bm: str, ruta_smb_silver_owid: str) -> str:
+        tmp_dir = Path(tempfile.mkdtemp(prefix="co2_gold_"))
+        silver_bm_local = smb_storage.descargar_archivo(
+            ruta_smb_silver_bm, tmp_dir / smb_storage.nombre_archivo(ruta_smb_silver_bm)
+        )
+        silver_owid_local = smb_storage.descargar_archivo(
+            ruta_smb_silver_owid, tmp_dir / smb_storage.nombre_archivo(ruta_smb_silver_owid)
+        )
+        gold_local = construir_gold(silver_bm_local, silver_owid_local, gold_dir=tmp_dir)
+        return smb_storage.subir_archivo(gold_local, f"{smb_storage.PROYECTO}/gold")
 
     fecha_ejecucion = "{{ ds }}"
 

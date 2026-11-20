@@ -39,16 +39,33 @@ en una fuente se marca `sin_dato_para_comparar` — nunca se descarta.
    API Banco Mundial          CSV Our World in Data
           |                           |
           v                           v
-   dags/data/bronze/world_bank   dags/data/bronze/owid   (JSON/CSV crudo)
+   (tmp local) -------- publica a SMB -------- (tmp local)
+          |                           |
+   reportes\co2_percapita_etl\bronze\world_bank\*.json
+   reportes\co2_percapita_etl\bronze\owid\*.csv
           |                           |
           v                           v
-   dags/data/silver/world_bank_co2_percapita.csv
-   dags/data/silver/owid_co2_percapita.csv       (limpio, país ISO3 + año)
+   (descarga de SMB, transforma localmente, publica de nuevo)
+          |                           |
+   reportes\co2_percapita_etl\silver\world_bank_co2_percapita.csv
+   reportes\co2_percapita_etl\silver\owid_co2_percapita.csv
           |                           |
           +------------+--------------+
                        v
-   dags/data/gold/co2_percapita_comparativo.csv   (integrado + diferencia)
+          (descarga ambas, integra, publica)
+                       v
+   reportes\co2_percapita_etl\gold\co2_percapita_comparativo.csv
 ```
+
+Las capas Bronze/Silver/Gold se publican en el **share SMB `reportes`**
+(conexión de Airflow `dwh_smb_reports`, usado como DWH de archivos del
+proyecto — mismo patrón ya probado en otros DAGs del equipo), no en el
+sistema de archivos del worker de Airflow: cada tarea escribe en un
+directorio temporal local (siempre escribible, sin depender de permisos de
+ningún volumen) y publica/descarga del share con verificación por hash
+(`dags/src/smb_storage.py`). Esto también resuelve el problema de fondo si
+las tareas llegaran a correr en workers distintos, ya que el disco local
+de un worker no sería visible para el siguiente.
 
 Orquestado por el DAG `co2_percapita_etl` (`dags/co2_percapita_etl_dag.py`),
 con tareas TaskFlow: `extraer_banco_mundial`, `extraer_owid`,
@@ -70,9 +87,13 @@ cargar_gold`, con `punto_de_falla_controlada` como compuerta previa a Gold.
 
 ```text
 dags/
-  co2_percapita_etl_dag.py   # DAG de Airflow
-  src/                        # extract.py, transform.py, load.py
-  data/{bronze,silver,gold}/  # capas Medallón (contenido ignorado en git)
+  co2_percapita_etl_dag.py   # DAG de Airflow (orquesta vía SMB)
+  src/
+    extract.py                # Bronze: descarga Banco Mundial / OWID
+    transform.py               # Silver: limpieza y estandarización
+    load.py                    # Gold: integración y diferencia
+    smb_storage.py              # publicar/descargar del share SMB
+  data/{bronze,silver,gold}/  # solo para pruebas locales sin SMB (ignorado en git)
 validacion/                   # hallazgos de la fase de validación de fuentes
 tests/                        # pruebas unitarias de la lógica de Gold
 evidencias/                   # capturas/logs de ejecución exitosa y fallida
@@ -81,59 +102,46 @@ requirements.txt
 
 `dags/` se diseñó para copiarse completa (el `.py` **y** la subcarpeta
 `src/`) a `/opt/airflow/dags/co2_percapita_etl/` en el servidor — es la
-única carpeta que el montaje estándar de Docker/Airflow garantiza. Las
-carpetas de datos viven dentro de `dags/data/` por el mismo motivo: no se
-asume que el `docker-compose` del servidor monte nada adicional de la raíz
-del repo.
+única carpeta que el montaje estándar de Docker/Airflow garantiza. Los
+datos de Bronze/Silver/Gold **no** viven ahí ni en ningún disco local del
+worker: se publican y se leen del share SMB `reportes` (ver sección 4 y el
+incidente más abajo), así que no dependen de qué monte o no el
+`docker-compose` del servidor.
 
 ## 6. Despliegue
 
 1. Copiar `dags/co2_percapita_etl_dag.py` y `dags/src/` completo a
    `/opt/airflow/dags/co2_percapita_etl/` en el servidor Ubuntu.
-2. Asegurarse de que el entorno de Airflow tenga `requests` y `pandas`
-   instalados (ver `requirements.txt`).
-3. **Confirmar que el usuario de Airflow puede escribir datos** (ver
-   "Incidente: permisos de escritura" más abajo) y, si no, exportar la
-   variable de entorno `CO2_DATA_DIR` apuntando a una ruta escribible
-   dentro del contenedor antes de levantarlo (ej. en `docker-compose.yml`,
-   sección `environment` del servicio de Airflow).
+2. Asegurarse de que el entorno de Airflow tenga `requests`, `pandas` y
+   `smbprotocol` instalados (ver `requirements.txt`).
+3. Confirmar que la conexión de Airflow `dwh_smb_reports` existe y tiene
+   host/usuario/contraseña del share `reportes` (Admin → Connections).
 4. El DAG aparece **pausado** (`is_paused_upon_creation=True`) — activarlo
    manualmente desde la UI solo después de revisarlo.
-5. Ejecutarlo manualmente ("Trigger DAG") y revisar el Grid/Graph view.
+5. Ejecutarlo manualmente ("Trigger DAG") y revisar el Grid/Graph view. Las
+   carpetas `co2_percapita_etl/{bronze,silver,gold}/` se crean solas en el
+   share la primera vez que una tarea publica un archivo
+   (`smbclient.makedirs(..., exist_ok=True)`), no hace falta crearlas a mano.
 
-### Incidente: permisos de escritura en `dags/data/` (resuelto con `CO2_DATA_DIR`)
+### Incidente: permisos de escritura en `dags/data/` (resuelto moviendo las capas a SMB)
 
 En el primer despliegue real, `extraer_banco_mundial` falló con
 `PermissionError: [Errno 13] Permission denied` al intentar crear
 `dags/data/bronze/world_bank/` dentro del volumen montado de `dags/` en
-Docker. Es el riesgo que ya se había marcado como pendiente de verificar:
-el volumen de `dags/` no siempre es escribible para el usuario `airflow`
-del contenedor (a veces solo se monta para que el *scheduler* lea el
-código, no para que las tareas escriban datos ahí).
+Docker: el usuario `airflow` del contenedor no tenía permiso de escritura
+ahí. Es el riesgo que ya se había marcado como pendiente de verificar
+(sección 7 del documento de propuesta).
 
-**Solución:** `extract.py`, `transform.py` y `load.py` ahora leen la
-variable de entorno `CO2_DATA_DIR` (si no está definida, usan
-`dags/data/` como antes — sin cambios para quien no la necesite).
-
-**Para diagnosticar qué ruta sí es escribible en tu contenedor**, ejecuta
-esto en el servidor (ajusta el nombre del servicio/contenedor):
-
-```bash
-docker compose exec airflow-worker bash -c '
-  touch /opt/airflow/dags/test_write && echo "dags/: escribible" || echo "dags/: SIN permiso";
-  touch /opt/airflow/logs/test_write && echo "logs/: escribible" || echo "logs/: SIN permiso";
-  touch /opt/airflow/test_write && echo "AIRFLOW_HOME: escribible" || echo "AIRFLOW_HOME: SIN permiso";
-  rm -f /opt/airflow/dags/test_write /opt/airflow/logs/test_write /opt/airflow/test_write
-'
-```
-
-Con el resultado, define `CO2_DATA_DIR` en el `environment:` del servicio
-de Airflow en `docker-compose.yml` (por ejemplo
-`CO2_DATA_DIR=/opt/airflow/logs/co2_percapita_data` si solo `logs/` resultó
-escribible, aunque lo más limpio a mediano plazo es agregar un volumen
-dedicado, ej. `./co2_data:/opt/airflow/co2_percapita_data`, y usar esa
-ruta) y reinicia los contenedores (`docker compose up -d`) antes de volver
-a disparar el DAG.
+**Solución adoptada:** en vez de buscar una ruta local escribible, las
+capas Bronze/Silver/Gold se movieron al share SMB `reportes` (conexión
+`dwh_smb_reports`), reutilizando un patrón ya probado en otros DAGs del
+equipo. Cada tarea solo necesita un directorio temporal local para su
+propio procesamiento (`tempfile.mkdtemp()`, siempre escribible en
+cualquier contenedor Linux) y publica/descarga del share — ver
+`dags/src/smb_storage.py` y la sección 4. Esto también es más robusto que
+fijar una ruta local: no depende de qué volumen monte el `docker-compose`
+del servidor, y seguiría funcionando si las tareas corrieran en workers
+distintos.
 
 ## 7. Provocar una falla controlada (para la evidencia de monitoreo)
 
